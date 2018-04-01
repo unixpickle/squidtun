@@ -2,12 +2,10 @@ use std::io;
 use std::io::{Read, Write};
 use std::iter::repeat;
 use std::net::SocketAddr;
-use std::sync::{Arc, RwLock}
 
-use futures::{Async, Future, Poll};
-use tokio_core::net::{TcpStream, TcpStreamNew};
+use futures::Future;
+use tokio_core::net::TcpStream;
 use tokio_core::reactor::Handle;
-use tokio_io::{AsyncRead, AsyncWrite};
 
 /// The result of a non-blocking operation.
 pub enum NonBlocking<T> {
@@ -17,7 +15,7 @@ pub enum NonBlocking<T> {
 }
 
 /// A remote connection for a user.
-pub struct Session<R: AsyncRead, W: AsyncWrite> {
+pub struct Session {
     pub id: String,
     pub stream: TcpStream
 }
@@ -29,17 +27,17 @@ impl Session {
         addr: &SocketAddr,
         handle: &Handle
     ) -> Box<Future<Item = Session, Error = io::Error>> {
-        Box::new(TcpStream::connect(&addr).map(|stream| {
+        Box::new(TcpStream::connect(addr, handle).map(|stream| {
             Session{id: id, stream: stream}
-        })
+        }))
     }
 
     /// Read a chunk of data from the session.
     ///
     /// Yields an empty chunk on EOF.
-    pub fn read_chunk(&self, max_size: usize) -> NonBlocking<Vec<u8>> {
+    pub fn read_chunk(&mut self, max_size: usize) -> NonBlocking<Vec<u8>> {
         let mut buffer: Vec<u8> = repeat(0).take(max_size).collect();
-        match self.stream.read(&buffer) {
+        match self.stream.read(&mut buffer) {
             Ok(size) => NonBlocking::Success(buffer[..size].to_vec()),
             Err(e) => {
                 if e.kind() == io::ErrorKind::WouldBlock {
@@ -55,7 +53,7 @@ impl Session {
     ///
     /// May not write all (or any) of the data.
     /// If 0 bytes are written, it likely indicates an error.
-    pub fn write_chunk(&self, chunk: &[u8]) -> io::Result<NonBlocking<usize>> {
+    pub fn write_chunk(&mut self, chunk: &[u8]) -> NonBlocking<usize> {
         match self.stream.write(chunk) {
             Ok(size) => NonBlocking::Success(size),
             Err(e) => {
