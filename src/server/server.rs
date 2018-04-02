@@ -21,9 +21,13 @@ pub struct TunnelService {
 }
 
 impl TunnelService {
-    pub fn new(password: String, remote: SocketAddr) -> TunnelService {
+    pub fn new(
+        sessions: Arc<RwLock<Vec<Session>>>,
+        password: String,
+        remote: SocketAddr
+    ) -> TunnelService {
         TunnelService{
-            sessions: Arc::new(RwLock::new(Vec::new())),
+            sessions: sessions,
             password: password,
             remote_host: remote,
             allowed_diff: 60,
