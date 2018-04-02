@@ -1,4 +1,5 @@
 use std::iter::Iterator;
+use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
 
 use futures::{Future, IntoFuture, Stream};
@@ -6,27 +7,44 @@ use hyper;
 use hyper::{Request, Response, StatusCode};
 use hyper::header::ContentType;
 use hyper::server::Service;
+use squidtun::{check_proof, generate_session_id};
+use tokio_core::net::TcpStream;
 
 use session::{NonBlocking, Session};
 
 pub struct TunnelService {
     sessions: Arc<RwLock<Vec<Session>>>,
     password: String,
+    remote_host: SocketAddr,
+    allowed_diff: u64,
     max_read_size: usize
 }
 
 impl TunnelService {
-    pub fn new(password: String) -> TunnelService {
+    pub fn new(password: String, remote: SocketAddr) -> TunnelService {
         TunnelService{
             sessions: Arc::new(RwLock::new(Vec::new())),
             password: password,
+            remote_host: remote,
+            allowed_diff: 60,
             max_read_size: 65536
         }
     }
 
     fn connect(&self, proof: &str) -> Box<Future<Item = Vec<u8>, Error = String>> {
-        // TODO: verify proof & create a session.
-        Box::new(Err("hi".to_owned()).into_future())
+        if !check_proof(&self.password, proof, self.allowed_diff) {
+            Box::new(Err("incorrect password".to_owned()).into_future())
+        } else {
+            let sessions = self.sessions.clone();
+            let id = generate_session_id();
+            Box::new(Session::connect(id.clone(), &self.remote_host)
+                .map(move |session| {
+                    let sessions: &mut Vec<Session> = &mut sessions.write().unwrap();
+                    sessions.push(session);
+                    id.as_bytes().to_vec()
+                })
+                .map_err(|e| format!("connect error: {}", e)))
+        }
     }
 
     fn upload(&self, req: Request, id: String) -> Box<Future<Item = Vec<u8>, Error = String>> {

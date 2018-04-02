@@ -27,10 +27,9 @@ impl Session {
     /// Establish a new session.
     pub fn connect(
         id: String,
-        addr: &SocketAddr,
-        handle: &Handle
+        addr: &SocketAddr
     ) -> Box<Future<Item = Session, Error = io::Error>> {
-        Box::new(TcpStream::connect(addr, handle).map(|stream| {
+        Box::new(TcpStream::connect2(addr).map(|stream| {
             Session{
                 id: id,
                 stream: stream,

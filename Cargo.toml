@@ -3,6 +3,10 @@ name = "squidtun"
 version = "0.1.0"
 authors = ["Alex Nichol <unixpickle@gmail.com>"]
 
+[lib]
+name = "squidtun"
+path = "src/mod.rs"
+
 [[bin]]
 name = "squidtun-server"
 path = "src/server/main.rs"
@@ -11,5 +15,6 @@ path = "src/server/main.rs"
 clap = "2.31"
 futures = "0.1"
 hyper = "0.11"
-mio = "0.6"
+rand = "0.4"
+sha1 = "0.6"
 tokio-core = "0.1"
