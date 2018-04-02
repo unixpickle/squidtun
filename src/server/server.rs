@@ -62,7 +62,7 @@ impl TunnelService {
 
     fn close(&self, id: &str) -> Box<Future<Item = Vec<u8>, Error = String>> {
         Box::new(TunnelService::with_session(&self.sessions, id, |sess| {
-            // TODO: send shutdown to socket.
+            sess.send_eof();
             "closed stdout".as_bytes().to_vec()
         }))
     }

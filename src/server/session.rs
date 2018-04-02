@@ -1,7 +1,7 @@
 use std::io;
 use std::io::{Read, Write};
 use std::iter::repeat;
-use std::net::SocketAddr;
+use std::net::{Shutdown, SocketAddr};
 
 use futures::Future;
 use tokio_core::net::TcpStream;
@@ -82,5 +82,10 @@ impl Session {
                 }
             }
         }
+    }
+
+    pub fn send_eof(&mut self) {
+        self.sent_eof = true;
+        self.stream.shutdown(Shutdown::Write).ok();
     }
 }
