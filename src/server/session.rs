@@ -5,7 +5,6 @@ use std::net::{Shutdown, SocketAddr};
 
 use futures::Future;
 use tokio_core::net::TcpStream;
-use tokio_core::reactor::Handle;
 
 /// The result of a non-blocking operation.
 pub enum NonBlocking<T> {

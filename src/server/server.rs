@@ -8,7 +8,6 @@ use hyper::{Request, Response, StatusCode};
 use hyper::header::ContentType;
 use hyper::server::Service;
 use squidtun::{check_proof, generate_session_id};
-use tokio_core::net::TcpStream;
 
 use session::{NonBlocking, Session};
 
@@ -99,11 +98,13 @@ impl TunnelService {
         f: F
     ) -> Box<Future<Item = R, Error = String>> where F: FnOnce(&mut Session) -> R {
         let sessions: &mut Vec<Session> = &mut sessions.write().unwrap();
-        for session in sessions {
-            if session.id == id {
-                // TODO: after using the session, clean up sessions
-                // that are totally done.
-                return Box::new(Ok(f(session)).into_future());
+        for i in 0..sessions.len() {
+            if sessions[i].id == id {
+                let result = Box::new(Ok(f(&mut sessions[i])).into_future());
+                if sessions[i].is_done() {
+                    sessions.remove(i);
+                }
+                return result;
             }
         }
         Box::new(Err("no session".to_owned()).into_future())
