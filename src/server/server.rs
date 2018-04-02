@@ -128,18 +128,20 @@ enum RequestInfo {
 
 impl RequestInfo {
     pub fn from_request<B>(req: &Request<B>) -> RequestInfo {
-        let path = req.path();
-        let prefixes: [(&str, Box<Fn(String) -> RequestInfo>); 4] = [
+        // Requests are of the form "/<api>/<argument>/unused_data_for_caching".
+        let components = req.path().split('/').collect::<Vec<&str>>();
+        if components.len() < 3 || components[0].len() != 0 {
+            return RequestInfo::Invalid;
+        };
+        let prefixes: Vec<(&str, Box<Fn(String) -> RequestInfo>)> = vec![
             ("connect", Box::new(|s| RequestInfo::Connect(s))),
             ("upload", Box::new(|s| RequestInfo::Upload(s))),
             ("download", Box::new(|s| RequestInfo::Download(s))),
             ("close", Box::new(|s| RequestInfo::Close(s)))
         ];
-        for &(ref prefix, ref f) in prefixes.iter() {
-            let start = format!("/{}/", prefix);
-            if path.starts_with(&start) {
-                let suffix = String::from_utf8_lossy(&path[start.len()..path.len()].as_bytes());
-                return f(String::from(suffix));
+        for (prefix, f) in prefixes {
+            if components[1] == prefix {
+                return f(components[2].to_owned());
             }
         }
         RequestInfo::Invalid
