@@ -1,9 +1,8 @@
 extern crate clap;
 extern crate futures;
 extern crate hyper;
-extern crate tokio_core;
-
 extern crate squidtun;
+extern crate tokio_core;
 
 mod session;
 mod server;
