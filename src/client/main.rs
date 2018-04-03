@@ -91,6 +91,7 @@ fn establish_session(
 ) -> Box<Future<Item = String, Error = String>> {
     let conn_url = format!("http://{}/connect/{}", host_info.proxy_addr,
         current_proof(&host_info.password));
+    // TODO: put hostname into request!
     Box::new(client.get(conn_url.parse().unwrap())
         .map_err(|e| format!("failed to make connect request: {}", e))
         .and_then(|response| {
