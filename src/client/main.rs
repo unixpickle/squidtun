@@ -10,8 +10,9 @@ mod future_util;
 use std::net::SocketAddr;
 
 use clap::{App, Arg};
-use futures::{Future, IntoFuture, Stream};
-use futures::future::{Loop, loop_fn};
+use futures::{Future, IntoFuture, Sink, Stream};
+use futures::future::{Loop, join_all, loop_fn};
+use futures::stream::repeat;
 use hyper::{Method, Request, StatusCode};
 use hyper::client::{Client, HttpConnector};
 use hyper::header::Host;
@@ -20,7 +21,7 @@ use tokio_core::net::{TcpListener, TcpStream};
 use tokio_core::reactor::Core;
 use tokio_io::AsyncRead;
 
-use future_util::{ReadStream, wait_for_end};
+use future_util::{ReadStream, WriteSink, wait_for_end};
 
 const CONCURRENT_CONNS: usize = 5;
 const MAX_READ_SIZE: usize = 65536;
@@ -73,6 +74,7 @@ fn main() {
         .map_err(|e| format!("listen error: {}", e))
         .map(move |(conn, _)| {
             handle_connection(client.clone(), host_info.clone(), conn)
+            // TODO: catch err and log it.
         })
         .buffered(CONCURRENT_CONNS);
     core.run(wait_for_end(conn_stream)).unwrap();
@@ -85,15 +87,21 @@ fn handle_connection(
     conn: TcpStream
 ) -> Box<Future<Item = (), Error = String>> {
     Box::new(establish_session(&client, &info).and_then(|sess_id| {
-        let (read_half, _) = conn.split();
+        let (read_half, write_half) = conn.split();
         let sess_1 = (client, info, sess_id);
         let sess_2 = sess_1.clone();
-        let read_future = ReadStream::new(read_half, MAX_READ_SIZE)
-            .map_err(|e| format!("error reading from local socket: {}", e))
-            .for_each(move |buf| upload_chunk(sess_1.clone(), buf))
-            .and_then(move |_| send_eof(&sess_2));
-        // TODO: create write future.
-        read_future
+        let sess_3 = sess_1.clone();
+        let read_future: Box<Future<Item = (), Error = String>> = Box::new(
+            ReadStream::new(read_half, MAX_READ_SIZE)
+                .map_err(|e| format!("error reading from local socket: {}", e))
+                .for_each(move |buf| upload_chunk(sess_1.clone(), buf))
+                .and_then(move |_| send_eof(&sess_2)));
+        let write_future: Box<Future<Item = (), Error = String>> = Box::new(
+            WriteSink::new(write_half)
+                .sink_map_err(|e| format!("error sending data: {}", e))
+                .send_all(download_stream(&sess_3))
+                .map(|_| ()));
+        join_all(vec![read_future, write_future]).map(|_| ())
     }))
 }
 
@@ -126,8 +134,31 @@ fn upload_chunk(info: SessionInfo, chunk: Vec<u8>) -> Box<Future<Item = (), Erro
     }))
 }
 
+/// Send an EOF to the remote end.
 fn send_eof(info: &SessionInfo) -> Box<Future<Item = (), Error = String>> {
     Box::new(api_request(&info.0, &info.1, "close", &info.2, None).and_then(|_| Ok(())))
+}
+
+/// Get a stream of chunks of data from the session.
+fn download_stream(info: &SessionInfo) -> Box<Stream<Item = Vec<u8>, Error = String>> {
+    Box::new(repeat(info.clone())
+        .and_then(|info| {
+            api_request(&info.0, &info.1, "download", &info.2, None)
+        })
+        .and_then(|data| {
+            if data.len() == 0 {
+                Err("received empty message".to_owned())
+            } else {
+                if data[0] == 1 {
+                    Ok(Some(data[1..data.len()].to_vec()))
+                } else {
+                    Ok(None)
+                }
+            }
+        })
+        .take_while(|info| Ok(info.is_some()))
+        .filter(|info| info.as_ref().unwrap().len() > 0)
+        .map(|x| x.unwrap()))
 }
 
 fn api_request(

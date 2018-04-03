@@ -74,9 +74,15 @@ impl TunnelService {
             sess.read_chunk(self.max_read_size)
         }).and_then(|res| {
             match res {
-                NonBlocking::Success(data) => Ok(vec![1].into_iter().chain(data).collect()),
+                NonBlocking::Success(data) => {
+                    Ok(if data.len() == 0 {
+                        vec![0]
+                    } else {
+                        vec![1].into_iter().chain(data).collect()
+                    })
+                },
                 NonBlocking::Err(err) => Err(format!("io error: {}", err)),
-                NonBlocking::WouldBlock => Ok(vec![0]),
+                NonBlocking::WouldBlock => Ok(vec![1]),
             }.into_future()
         }))
     }
