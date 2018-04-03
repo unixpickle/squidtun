@@ -4,6 +4,10 @@ extern crate hyper;
 extern crate squidtun;
 extern crate tokio_core;
 
+#[macro_use]
+extern crate log;
+extern crate simple_logger;
+
 mod session;
 mod server;
 
@@ -11,10 +15,13 @@ use std::sync::{Arc, RwLock};
 
 use clap::{App, Arg};
 use hyper::server::Http;
+use log::Level;
 
 use server::TunnelService;
 
 fn main() {
+    simple_logger::init_with_level(Level::Info).unwrap();
+
     let matches = App::new("squidtun-server")
         .arg(Arg::with_name("password")
             .short("p")

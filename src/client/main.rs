@@ -5,6 +5,10 @@ extern crate squidtun;
 extern crate tokio_core;
 extern crate tokio_io;
 
+#[macro_use]
+extern crate log;
+extern crate simple_logger;
+
 mod future_util;
 
 use std::net::SocketAddr;
@@ -16,6 +20,7 @@ use futures::stream::repeat;
 use hyper::{Method, Request, StatusCode};
 use hyper::client::{Client, HttpConnector};
 use hyper::header::Host;
+use log::Level;
 use squidtun::{current_proof, generate_session_id};
 use tokio_core::net::{TcpListener, TcpStream};
 use tokio_core::reactor::Core;
@@ -36,6 +41,8 @@ struct HostInfo {
 type SessionInfo = (Client<HttpConnector>, HostInfo, String);
 
 fn main() {
+    simple_logger::init_with_level(Level::Info).unwrap();
+
     let matches = App::new("squidtun-server")
         .arg(Arg::with_name("password")
             .short("p")
@@ -72,9 +79,15 @@ fn main() {
     let listener = TcpListener::bind(&local_addr, &handle).expect("Failed to bind listener.");
     let conn_stream = listener.incoming()
         .map_err(|e| format!("listen error: {}", e))
-        .map(move |(conn, _)| {
-            handle_connection(client.clone(), host_info.clone(), conn)
-            // TODO: catch err and log it.
+        .map(move |(conn, addr)| {
+            info!("got connection from {}", addr);
+            handle_connection(client.clone(), host_info.clone(), conn).then(move |val| {
+                if let Err(e) = val {
+                    warn!("{}: {}", addr, e);
+                }
+                info!("{}: session ended", addr);
+                Ok(())
+            })
         })
         .buffered(CONCURRENT_CONNS);
     core.run(wait_for_end(conn_stream)).unwrap();

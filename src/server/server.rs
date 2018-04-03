@@ -36,12 +36,14 @@ impl TunnelService {
 
     fn connect(&self, proof: &str) -> Box<Future<Item = Vec<u8>, Error = String>> {
         if !check_proof(&self.password, proof, self.allowed_diff) {
+            info!("got incorrect login");
             Box::new(Err("incorrect password".to_owned()).into_future())
         } else {
             let sessions = self.sessions.clone();
             let id = generate_session_id();
             Box::new(Session::connect(id.clone(), &self.remote_host)
                 .map(move |session| {
+                    info!("created new session: {}", session.id);
                     let sessions: &mut Vec<Session> = &mut sessions.write().unwrap();
                     sessions.push(session);
                     id.as_bytes().to_vec()
@@ -89,6 +91,7 @@ impl TunnelService {
 
     fn close(&self, id: &str) -> Box<Future<Item = Vec<u8>, Error = String>> {
         Box::new(TunnelService::with_session(&self.sessions, id, |sess| {
+            info!("sent EOF on session: {}", sess.id);
             sess.send_eof();
             "closed stdout".as_bytes().to_vec()
         }))
@@ -108,6 +111,7 @@ impl TunnelService {
             if sessions[i].id == id {
                 let result = Box::new(Ok(f(&mut sessions[i])).into_future());
                 if sessions[i].is_done() {
+                    info!("removed session: {}", sessions[i].id);
                     sessions.remove(i);
                 }
                 return result;
