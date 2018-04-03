@@ -14,7 +14,7 @@ mod future_util;
 use std::net::SocketAddr;
 
 use clap::{App, Arg};
-use futures::{Future, IntoFuture, Sink, Stream};
+use futures::{Future, Sink, Stream};
 use futures::future::{Loop, join_all, loop_fn};
 use futures::stream::repeat;
 use hyper::{Method, Request, StatusCode};
@@ -131,19 +131,21 @@ fn establish_session(
 
 /// Send a chunk of data on the session.
 fn upload_chunk(info: SessionInfo, chunk: Vec<u8>) -> Box<Future<Item = (), Error = String>> {
-    Box::new(loop_fn(0usize, move |state| -> Box<Future<Item = Loop<(), usize>, Error = String>> {
-        if state == chunk.len() {
-            Box::new(Ok(Loop::Break(())).into_future())
-        } else {
-            let remaining = chunk[state..chunk.len()].to_vec();
-            Box::new(api_request(&info.0, &info.1, "upload", &info.2, Some(remaining))
-                .and_then(move |x| {
-                    match String::from_utf8_lossy(&x).parse::<usize>() {
-                        Ok(size) => Ok(Loop::Continue(state + size)),
-                        Err(_) => Err("invalid response".to_owned())
-                    }
-                }))
-        }
+    let total_size = chunk.len();
+    Box::new(loop_fn(0usize, move |state| {
+        let remaining = chunk[state..chunk.len()].to_vec();
+        api_request(&info.0, &info.1, "upload", &info.2, Some(remaining)).and_then(move |x| {
+            match String::from_utf8_lossy(&x).parse::<usize>() {
+                Ok(size) => {
+                    Ok(if size + state == total_size {
+                        Loop::Break(())
+                    } else {
+                        Loop::Continue(state + size)
+                    })
+                },
+                Err(_) => Err("invalid response".to_owned())
+            }
+        })
     }))
 }
 
