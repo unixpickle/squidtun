@@ -11,15 +11,19 @@ use std::net::SocketAddr;
 
 use clap::{App, Arg};
 use futures::{Future, IntoFuture, Stream};
-use hyper::StatusCode;
+use futures::future::{Loop, loop_fn};
+use hyper::{Method, Request, StatusCode};
 use hyper::client::{Client, HttpConnector};
-use squidtun::current_proof;
+use hyper::header::Host;
+use squidtun::{current_proof, generate_session_id};
 use tokio_core::net::{TcpListener, TcpStream};
 use tokio_core::reactor::Core;
+use tokio_io::AsyncRead;
 
-use future_util::wait_for_end;
+use future_util::{ReadStream, wait_for_end};
 
 const CONCURRENT_CONNS: usize = 5;
+const MAX_READ_SIZE: usize = 65536;
 
 #[derive(Clone, Debug)]
 struct HostInfo {
@@ -27,6 +31,8 @@ struct HostInfo {
     host: String,
     password: String
 }
+
+type SessionInfo = (Client<HttpConnector>, HostInfo, String);
 
 fn main() {
     let matches = App::new("squidtun-server")
@@ -66,7 +72,7 @@ fn main() {
     let conn_stream = listener.incoming()
         .map_err(|e| format!("listen error: {}", e))
         .map(move |(conn, _)| {
-            handle_connection(&client, &host_info, &conn)
+            handle_connection(client.clone(), host_info.clone(), conn)
         })
         .buffered(CONCURRENT_CONNS);
     core.run(wait_for_end(conn_stream)).unwrap();
@@ -74,13 +80,20 @@ fn main() {
 
 /// Generate a Future that drives a new session.
 fn handle_connection(
-    client: &Client<HttpConnector>,
-    info: &HostInfo,
-    conn: &TcpStream
+    client: Client<HttpConnector>,
+    info: HostInfo,
+    conn: TcpStream
 ) -> Box<Future<Item = (), Error = String>> {
-    Box::new(establish_session(client, info).and_then(|sess_id| {
-        // TODO: start reader and writer.
-        Ok(()).into_future()
+    Box::new(establish_session(&client, &info).and_then(|sess_id| {
+        let (read_half, _) = conn.split();
+        let sess_1 = (client, info, sess_id);
+        let sess_2 = sess_1.clone();
+        let read_future = ReadStream::new(read_half, MAX_READ_SIZE)
+            .map_err(|e| format!("error reading from local socket: {}", e))
+            .for_each(move |buf| upload_chunk(sess_1.clone(), buf))
+            .and_then(move |_| send_eof(&sess_2));
+        // TODO: create write future.
+        read_future
     }))
 }
 
@@ -89,21 +102,66 @@ fn establish_session(
     client: &Client<HttpConnector>,
     host_info: &HostInfo
 ) -> Box<Future<Item = String, Error = String>> {
-    let conn_url = format!("http://{}/connect/{}", host_info.proxy_addr,
-        current_proof(&host_info.password));
-    // TODO: put hostname into request!
-    Box::new(client.get(conn_url.parse().unwrap())
-        .map_err(|e| format!("failed to make connect request: {}", e))
-        .and_then(|response| {
-            let status_code = response.status();
-            response.body().concat2()
+    let proof = current_proof(&host_info.password);
+    Box::new(api_request(client, host_info, "connect", &proof, None).and_then(|body| {
+        Ok(String::from(String::from_utf8_lossy(&body)))
+    }))
+}
+
+/// Send a chunk of data on the session.
+fn upload_chunk(info: SessionInfo, chunk: Vec<u8>) -> Box<Future<Item = (), Error = String>> {
+    Box::new(loop_fn(0usize, move |state| -> Box<Future<Item = Loop<(), usize>, Error = String>> {
+        if state == chunk.len() {
+            Box::new(Ok(Loop::Break(())).into_future())
+        } else {
+            let remaining = chunk[state..chunk.len()].to_vec();
+            Box::new(api_request(&info.0, &info.1, "upload", &info.2, Some(remaining))
+                .and_then(move |x| {
+                    match String::from_utf8_lossy(&x).parse::<usize>() {
+                        Ok(size) => Ok(Loop::Continue(state + size)),
+                        Err(_) => Err("invalid response".to_owned())
+                    }
+                }))
+        }
+    }))
+}
+
+fn send_eof(info: &SessionInfo) -> Box<Future<Item = (), Error = String>> {
+    Box::new(api_request(&info.0, &info.1, "close", &info.2, None).and_then(|_| Ok(())))
+}
+
+fn api_request(
+    client: &Client<HttpConnector>,
+    host_info: &HostInfo,
+    api: &str,
+    arg: &str,
+    data: Option<Vec<u8>>
+) -> Box<Future<Item = Vec<u8>, Error = String>> {
+    let cache_once = generate_session_id();
+    let method = if data.is_some() {
+        Method::Post
+    } else {
+        Method::Get
+    };
+    let mut req = Request::new(
+        method,
+        format!("http://{}/{}/{}/{}", host_info.proxy_addr, api, arg, cache_once).parse().unwrap()
+    );
+    req.headers_mut().set(Host::new(host_info.host.clone(), None));
+    if let Some(x) = data {
+        req.set_body(x);
+    }
+    Box::new(client.request(req)
+        .map_err(|e| format!("failed to make request: {}", e))
+        .and_then(|resp| {
+            let status_code = resp.status();
+            resp.body().concat2()
                 .map_err(|e| format!("failed to read body: {}", e))
                 .and_then(move |body| {
-                    let str_body = String::from(String::from_utf8_lossy(&body));
-                    if status_code == StatusCode::Ok {
-                        Ok(str_body)
+                    if status_code != StatusCode::Ok {
+                        Err(format!("error from server: {}", String::from_utf8_lossy(&body)))
                     } else {
-                        Err(str_body)
+                        Ok(body.to_vec())
                     }
                 })
         }))
