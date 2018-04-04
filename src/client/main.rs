@@ -75,7 +75,7 @@ fn main() {
 
     let mut core = Core::new().unwrap();
     let handle = core.handle();
-    let client = Client::configure().keep_alive(false).build(&handle);
+    let client = Client::configure().keep_alive(true).build(&handle);
     let listener = TcpListener::bind(&local_addr, &handle).expect("Failed to bind listener.");
     let conn_stream = listener.incoming()
         .map_err(|e| format!("listen error: {}", e))
@@ -194,7 +194,7 @@ fn api_request(
         format!("http://{}/{}/{}/{}", host_info.proxy_addr, api, arg, cache_once).parse().unwrap()
     );
     req.headers_mut().set(Host::new(host_info.host.clone(), None));
-    req.headers_mut().set(Connection::close());
+    req.headers_mut().set(Connection::keep_alive());
     if let Some(x) = data {
         req.set_body(x);
     }
