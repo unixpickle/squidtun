@@ -80,7 +80,6 @@ impl<T: AsyncWrite> Sink for WriteSink<T> {
         Ok(match self.attempt_write()? {
             Async::Ready(_) => {
                 self.cur_buf = Some(item);
-                self.attempt_write()?;
                 AsyncSink::Ready
             }
             Async::NotReady => AsyncSink::NotReady(item)
