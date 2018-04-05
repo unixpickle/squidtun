@@ -1,17 +1,14 @@
 use std::iter::Iterator;
 use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
-use std::time::{Duration, Instant};
 
 use futures::{Future, IntoFuture, Stream};
-use futures::executor::spawn;
 use hyper;
 use hyper::{Request, Response, StatusCode};
 use hyper::header::ContentType;
 use hyper::server::Service;
 use squidtun::{check_proof, generate_session_id};
 use session::{NonBlocking, Session};
-use tokio_timer::Interval;
 
 pub struct TunnelService {
     sessions: Arc<RwLock<Vec<Session>>>,
@@ -50,7 +47,6 @@ impl TunnelService {
                         let sessions: &mut Vec<Session> = &mut sessions.write().unwrap();
                         sessions.push(session);
                     }
-                    spawn(TunnelService::timeout_loop(sessions, id.clone()));
                     id.as_bytes().to_vec()
                 })
                 .map_err(|e| format!("connect error: {}", e)))
@@ -115,7 +111,7 @@ impl TunnelService {
         for i in 0..sessions.len() {
             if sessions[i].id == id {
                 let result = Box::new(Ok(f(&mut sessions[i])).into_future());
-                if sessions[i].is_done() {
+                if sessions[i].is_done() || sessions[i].is_timed_out() {
                     info!("removed session: {}", sessions[i].id);
                     sessions.remove(i);
                 }
@@ -123,23 +119,6 @@ impl TunnelService {
             }
         }
         Box::new(Err("no session".to_owned()).into_future())
-    }
-
-    fn timeout_loop(
-        sessions: Arc<RwLock<Vec<Session>>>,
-        id: String
-    ) -> Box<Future<Item = (), Error = ()>> {
-        Box::new(Interval::new(Instant::now(), Duration::from_secs(1))
-            .take_while(move |_| {
-                TunnelService::with_session(&sessions, &id, |sess| sess.timed_out()).then(|res| {
-                    Ok(match res {
-                        Err(_) | Ok(true) => false,
-                        Ok(false) => true
-                    })
-                })
-            })
-            .for_each(|_| Ok(()))
-            .map_err(|_| ()))
     }
 }
 

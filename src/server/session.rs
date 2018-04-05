@@ -95,7 +95,7 @@ impl Session {
         self.stream.shutdown(Shutdown::Write).ok();
     }
 
-    pub fn timed_out(&self) -> bool {
+    pub fn is_timed_out(&self) -> bool {
         self.last_used.elapsed() > Duration::from_secs(CONNECTION_TIMEOUT)
     }
 }
