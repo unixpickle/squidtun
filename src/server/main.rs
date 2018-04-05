@@ -3,6 +3,7 @@ extern crate futures;
 extern crate hyper;
 extern crate squidtun;
 extern crate tokio_core;
+extern crate tokio_timer;
 
 #[macro_use]
 extern crate log;

@@ -2,9 +2,12 @@ use std::io;
 use std::io::{Read, Write};
 use std::iter::repeat;
 use std::net::{Shutdown, SocketAddr};
+use std::time::{Duration, Instant};
 
 use futures::Future;
 use tokio_core::net::TcpStream;
+
+const CONNECTION_TIMEOUT: u64 = 30;
 
 /// The result of a non-blocking operation.
 pub enum NonBlocking<T> {
@@ -19,7 +22,8 @@ pub struct Session {
     pub stream: TcpStream,
 
     sent_eof: bool,
-    received_eof: bool
+    received_eof: bool,
+    last_used: Instant
 }
 
 impl Session {
@@ -33,7 +37,8 @@ impl Session {
                 id: id,
                 stream: stream,
                 sent_eof: false,
-                received_eof: false
+                received_eof: false,
+                last_used: Instant::now()
             }
         }))
     }
@@ -47,6 +52,7 @@ impl Session {
     ///
     /// Yields an empty chunk on EOF.
     pub fn read_chunk(&mut self, max_size: usize) -> NonBlocking<Vec<u8>> {
+        self.last_used = Instant::now();
         let mut buffer: Vec<u8> = repeat(0).take(max_size).collect();
         match self.stream.read(&mut buffer) {
             Ok(size) => {
@@ -70,6 +76,7 @@ impl Session {
     /// May not write all (or any) of the data.
     /// If 0 bytes were written, it likely indicates an error.
     pub fn write_chunk(&mut self, chunk: &[u8]) -> NonBlocking<usize> {
+        self.last_used = Instant::now();
         match self.stream.write(chunk) {
             Ok(size) => NonBlocking::Success(size),
             Err(e) => {
@@ -83,7 +90,12 @@ impl Session {
     }
 
     pub fn send_eof(&mut self) {
+        self.last_used = Instant::now();
         self.sent_eof = true;
         self.stream.shutdown(Shutdown::Write).ok();
+    }
+
+    pub fn timed_out(&self) -> bool {
+        self.last_used.elapsed() > Duration::from_secs(CONNECTION_TIMEOUT)
     }
 }
