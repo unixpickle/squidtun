@@ -26,9 +26,8 @@ use tokio_core::net::{TcpListener, TcpStream};
 use tokio_core::reactor::Core;
 use tokio_io::AsyncRead;
 
-use future_util::{ReadStream, WriteSink, wait_for_end};
+use future_util::{ReadStream, WriteSink};
 
-const CONCURRENT_CONNS: usize = 5;
 const MAX_READ_SIZE: usize = 65536;
 
 #[derive(Clone, Debug)]
@@ -77,20 +76,22 @@ fn main() {
     let handle = core.handle();
     let client = Client::configure().keep_alive(true).build(&handle);
     let listener = TcpListener::bind(&local_addr, &handle).expect("Failed to bind listener.");
-    let conn_stream = listener.incoming()
+    let listen_future = listener.incoming()
         .map_err(|e| format!("listen error: {}", e))
-        .map(move |(conn, addr)| {
+        .for_each(move |(conn, addr)| {
             info!("got connection from {}", addr);
-            handle_connection(client.clone(), host_info.clone(), conn).then(move |val| {
-                if let Err(e) = val {
-                    warn!("{}: {}", addr, e);
-                }
-                info!("{}: session ended", addr);
-                Ok(())
-            })
-        })
-        .buffered(CONCURRENT_CONNS);
-    core.run(wait_for_end(conn_stream)).unwrap();
+            let conn_handler = handle_connection(client.clone(), host_info.clone(), conn)
+                .then(move |val| {
+                    if let Err(e) = val {
+                        warn!("{}: {}", addr, e);
+                    }
+                    info!("{}: session ended", addr);
+                    Ok(())
+                });
+            handle.spawn(conn_handler);
+            Ok(())
+        });
+    core.run(listen_future).unwrap();
 }
 
 /// Generate a Future that drives a new session.

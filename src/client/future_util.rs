@@ -2,13 +2,8 @@ use std::io;
 use std::iter::repeat;
 use std::mem::replace;
 
-use futures::{Async, AsyncSink, Future, IntoFuture, Poll, Sink, StartSend, Stream};
+use futures::{Async, AsyncSink, Poll, Sink, StartSend, Stream};
 use tokio_io::{AsyncRead, AsyncWrite};
-
-/// Get a Future for when the stream completes.
-pub fn wait_for_end<S: Stream + 'static>(s: S) -> Box<Future<Item = (), Error = S::Error>> {
-    Box::new(s.for_each(|_| Ok(()).into_future()))
-}
 
 pub struct ReadStream<T: AsyncRead> {
     reader: T,
