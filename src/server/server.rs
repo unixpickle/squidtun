@@ -5,10 +5,11 @@ use std::sync::{Arc, RwLock};
 use futures::{Future, IntoFuture, Stream};
 use hyper;
 use hyper::{Request, Response, StatusCode};
-use hyper::header::ContentType;
+use hyper::header::{CacheControl, CacheDirective, ContentType, Expires, Pragma};
 use hyper::server::Service;
 use squidtun::{check_proof, generate_session_id};
 use session::{NonBlocking, Session};
+use std::time::{SystemTime, Duration};
 
 pub struct TunnelService {
     sessions: Arc<RwLock<Vec<Session>>>,
@@ -148,6 +149,14 @@ impl Service for TunnelService {
                 .with_status(StatusCode::BadRequest)
                 .with_header(ContentType("text/plain".parse().unwrap()))
                 .with_body(msg)).into_future()
+        }).map(|response| {
+            // https://stackoverflow.com/questions/49547/how-to-control-web-page-caching-across-all-browsers
+            let yesterday = SystemTime::now() - Duration::from_secs(60 * 60 * 24);
+            response
+                .with_header(CacheControl(vec![CacheDirective::NoCache, CacheDirective::NoStore,
+                    CacheDirective::MustRevalidate]))
+                .with_header(Pragma::NoCache)
+                .with_header(Expires(yesterday.into()))
         }))
     }
 }
